@@ -12,6 +12,8 @@ func main() {
 		panic(err)
 	}
 
+	fmt.Println("Listening on", server.Addr())
+
 	for {
 		go func(conn net.Conn, err error) {
 			if err == nil {

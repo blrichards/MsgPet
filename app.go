@@ -21,8 +21,7 @@ type Config struct {
 	Port    int
 	Host    string
 	Clients int
-	Tests   int
-	// Delay   time.Duration
+	Delay   string
 }
 
 var mux sync.Mutex
@@ -91,16 +90,25 @@ func main() {
 		return
 	}
 
+	// set delay between client requests
+	delay, err := time.ParseDuration(config.Delay)
+
+	if err != nil {
+		fmt.Println("invalid delay, please input a duration in the format <int><unit>. (ex. 200ms)")
+	}
+
 	// run tests
+	start := time.Now()
 	for i := 0; i < config.Clients; i++ {
 		go runTest(os.Args[1])
-		time.Sleep(time.Nanosecond * 100000)
+		time.Sleep(delay)
 	}
 
 	// wait for all tests to complete
 	for i := 0; i < config.Clients; i++ {
 		<-testDone
 	}
+	stopTime := time.Since(start)
 
 	// close the results channel
 	close(results)
@@ -116,7 +124,11 @@ func main() {
 	fmt.Println("Average successful response time:", totalResponseTime/time.Duration(successfulTests))
 	fmt.Println("Successful tests:", successfulTests)
 	fmt.Println("Failed tests:", failedTests)
-	fmt.Println("\nErrors (reason -> frequency):")
+	if failedTests > 0 {
+		fmt.Println("\nErrors (reason -> frequency):")
+	} else {
+		fmt.Printf("\nServer was able to successfully handle %d requests in %s\n", config.Clients, stopTime.String())
+	}
 	for err, count := range errors {
 		fmt.Printf("\t%s -> %d\n", err, count)
 	}
