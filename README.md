@@ -51,7 +51,7 @@ The only command line argument for MsgPET is the size of the message to be gener
 
 ## Output
 
-Output of the tool is a summary consisting of the message used in the test, sum of response times, average response time number of successful responses, number of failed responses, and either
+Output of the tool is a summary consisting of the message used in the test, sum of response times, average response time, number of successful responses, number of failed responses, and either...
 
 1. the speed of the server in clients/sec if all requests were successfully handled or
 2. a list of error messages if any requests were unsuccessful
