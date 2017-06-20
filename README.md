@@ -40,7 +40,7 @@ single-socket: false
 
 ### Message Sizes
 
-There are two methods of declaring the size of the message to be sent during the test
+There are two methods of declaring the size of message to be sent in the test
 
 1. an `int` representing the the size of the message in bytes
 2. an animal! after all it is called MsgPET
