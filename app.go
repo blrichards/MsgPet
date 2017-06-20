@@ -48,7 +48,7 @@ project page: https://github.com/iot-dsa-v2/MsgPET
 OPTION              | ARG                    | DESCRIPTION
 ====================|========================|==============================
 -m, -size           | int or animal name     | message size
--t, -tests          | number of killibytes   | number of tests
+-t, -tests          | int                    | number of tests
 -h, -host           | ip address             | hostname of server to test
 -p, -port           | port number            | port number of server to test
 -d, -delay          | duration (ex. 100ms)   | delay between requests
