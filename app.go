@@ -162,14 +162,13 @@ func parseArgs(config *appConfig, args []string) {
 	v := reflect.ValueOf(config).Elem()
 	d := reflect.ValueOf(defaults)
 	for i := 0; i < v.NumField(); i++ {
-		if isZero(v.Field(i)) {
+		if isZero(v.Field(i)) && v.Type().Field(i).Name != "SingleSocket" {
 			if isZero(d.Field(i)) {
 				fatal("The `%s` value was not set from command line and no default value exists. "+
 					"Please set a default value in ~/.msgpetrc or specify value in command line.",
 					transforms.Underscore(v.Type().Field(i).Name))
-			} else {
-				v.Field(i).Set(d.Field(i))
 			}
+			v.Field(i).Set(d.Field(i))
 		}
 	}
 

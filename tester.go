@@ -53,20 +53,23 @@ func (t *Test) MakeRequest(conn net.Conn, message string) {
 	// wait for response and save response time
 	_, err := bufio.NewReader(conn).ReadString('\n')
 	responseTime := time.Since(start)
-	// log results
-	if err != nil {
-		// save error message for summary if request unsuccessful
-		errorArray := strings.SplitAfter(err.Error(), ": ")
-		t.mux.Lock()
-		t.Errors[errorArray[len(errorArray)-1]]++
-		t.mux.Unlock()
-		atomic.AddUint64(&t.FailedRequests, 1)
-	} else {
-		// log successful test and response time
-		atomic.AddUint64(&t.SuccessfulRequests, 1)
-		t.results <- responseTime
-	}
-	t.done <- true
+
+	go func() {
+		// log results
+		if err != nil {
+			// save error message for summary if request unsuccessful
+			errorArray := strings.SplitAfter(err.Error(), ": ")
+			t.mux.Lock()
+			t.Errors[errorArray[len(errorArray)-1]]++
+			t.mux.Unlock()
+			atomic.AddUint64(&t.FailedRequests, 1)
+		} else {
+			// log successful test and response time
+			atomic.AddUint64(&t.SuccessfulRequests, 1)
+			t.results <- responseTime
+		}
+		t.done <- true
+	}()
 }
 
 // Wait waits until all requests are complete before calculating stats
