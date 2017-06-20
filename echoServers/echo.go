@@ -16,19 +16,24 @@ func main() {
 
 	for {
 		go func(conn net.Conn, err error) {
-			if err == nil {
-				in := bufio.NewReader(conn)
-				message, newErr := in.ReadString('\n')
-				if newErr == nil {
-					_, err = fmt.Fprint(conn, message)
+			for {
+				if err == nil {
+					in := bufio.NewReader(conn)
+					message, err := in.ReadString('\n')
 					if err == nil {
+						_, err = fmt.Fprint(conn, message)
+						if err != nil {
+							conn.Close()
+							return
+						}
+					} else {
 						conn.Close()
-						return
 					}
+				} else {
+					conn.Close()
+					return
 				}
 			}
-			conn.Close()
-			fmt.Println(err.Error())
 		}(server.Accept())
 	}
 }

@@ -1,177 +1,215 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
-	"net"
 	"os"
 	"path"
+	"reflect"
 	"strconv"
 	"time"
 
-	"strings"
-	"sync"
-
+	"github.com/blrichards/MsgPET/transforms"
 	"github.com/mitchellh/go-homedir"
 	"gopkg.in/yaml.v2"
 )
 
-type Config struct {
-	Port    int
-	Host    string
-	Clients int
-	Delay   string
+var animals = map[string]int{
+	"mouse":    8,
+	"chicken":  16,
+	"pig":      32,
+	"goat":     64,
+	"zebra":    128,
+	"rhino":    256,
+	"hippo":    512,
+	"elephant": 1024,
+	"whale":    2048,
 }
 
-var mux sync.Mutex
-var config Config
-var successfulTests = 0
-var failedTests = 0
-var errors = make(map[string]int64)
-var random = rand.New(rand.NewSource(time.Now().UnixNano()))
+type appConfig struct {
+	Port         int    `yaml:"port"`
+	Host         string `yaml:"host"`
+	Requests     uint64 `yaml:"requests"`
+	Delay        string `yaml:"delay"`
+	SingleSocket bool   `yaml:"single-socket"`
+	MessageSize  string `yaml:"message-size"`
+}
 
-var results chan time.Duration
+var defaults appConfig
 var testDone = make(chan bool)
 
+const helpString = `name:         MsgPET
+description:  server stress testing tool
+version:      v0.0
+author:       Ben Richards
+project page: https://github.com/iot-dsa-v2/MsgPET
+
+OPTION              | ARG                    | DESCRIPTION
+====================|========================|==============================
+-m, -size           | int or animal name     | message size
+-t, -tests          | number of killibytes   | number of tests
+-h, -host           | ip address             | hostname of server to test
+-p, -port           | port number            | port number of server to test
+-d, -delay          | duration (ex. 100ms)   | delay between requests
+-s, -single-socket  | none                   | use one socket for test (ignores delay)`
+
 func init() {
-	// find home directory
+	// parse config file at ~/.msgpetrc for default args
 	home, err := homedir.Dir()
 	if err != nil {
-		panic(err)
+		fatal("%s", err)
 	}
-
-	// parse config file at ~/.msgpetrc
 	configFile, err := ioutil.ReadFile(path.Join(home, ".msgpetrc"))
 	if err != nil {
-		panic(err)
+		fatal("%s", err)
 	}
-	err = yaml.Unmarshal(configFile, &config)
+	err = yaml.Unmarshal(configFile, &defaults)
 	if err != nil {
-		panic(err)
+		fatal("%s", err)
 	}
-
-	// initialize results channel
-	results = make(chan time.Duration, config.Clients)
 }
 
 func main() {
-	if len(os.Args) != 2 {
-		if len(os.Args) < 2 {
-			fmt.Println("please provide a message for test clients to send")
-		} else {
-			fmt.Println("too many command line arguments")
-		}
-		return
-	} else if config.Clients < 1 {
-		fmt.Println("number of clients must be greater than zero")
-		return
+	var config appConfig
+	parseArgs(&config, os.Args[1:])
+
+	testConfig := TestConfig{
+		HostAddr: fmt.Sprintf("%s:%d", config.Host, config.Port),
+		Requests: config.Requests,
+		Delay:    handleError(time.ParseDuration(config.Delay)).(time.Duration),
+		Message:  genMessage(config.MessageSize),
 	}
 
-	// set delay between client requests
-	delay, err := time.ParseDuration(config.Delay)
+	var results Test
+	if config.SingleSocket {
+		results = TestSingle(testConfig)
+	} else {
+		results = TestMult(testConfig)
+	}
 
+	// print summary
+	fmt.Println("Total test time:", results.TotalTime)
+	fmt.Println("Average response time:")
+	fmt.Println("Successful requests:", results.SuccessfulRequests)
+	fmt.Println("Failed requests:", results.FailedRequests)
+	if results.FailedRequests > 0 {
+		fmt.Println("\nErrors (reason -> frequency):")
+	} else {
+		fmt.Printf("\nServer was able to successfully handle %d requests in %s (%f clients/sec)\n",
+			config.Requests,
+			results.TotalTime.String(),
+			float64(config.Requests)/(float64(results.TotalTime)*float64(1e-9)))
+	}
+	for err, count := range results.Errors {
+		fmt.Printf("\t%s -> %d\n", err, count)
+	}
+}
+
+func fatal(format string, args ...interface{}) {
+	fmt.Print("\nAn unexpected error occured:\n\t")
+	fmt.Println(fmt.Sprintf(format, args...))
+	fmt.Println("\nTry `MsgPET help` for a list of valid command line arguments")
+	fmt.Println()
+	os.Exit(1)
+}
+
+func parseArgs(config *appConfig, args []string) {
+	var i int
+	// setup wrapper functions
+	handleConv := func(value interface{}, err error) interface{} {
+		if err != nil {
+			fatal("invalid option, %s, for argument %s", args[i+1], args[i])
+		}
+		return value
+	}
+	needsVal := func(setter func()) {
+		if i+1 >= len(args) {
+			fatal("invalid option, null, for argument " + args[i])
+		}
+		setter()
+		i++
+	}
+
+	// check for help call
+	if len(args) == 1 && args[0] == "help" {
+		fmt.Println(helpString)
+		os.Exit(0)
+	}
+
+	// parse args
+	for i = 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		default:
+			fatal("invalid command line argument " + args[i])
+		case "-m", "-size":
+			needsVal(func() { config.MessageSize = args[i+1] })
+		case "-t", "-tests":
+			needsVal(func() { config.Requests = uint64(handleConv(strconv.Atoi(args[i+1])).(int)) })
+		case "-h", "-host":
+			needsVal(func() { config.Host = args[i+1] })
+		case "-p", "-port":
+			needsVal(func() { config.Port = handleConv(strconv.Atoi(args[i+1])).(int) })
+		case "-d", "-delay":
+			needsVal(func() { config.Delay = args[i+1] })
+		case "-s", "-single-socket":
+			config.SingleSocket = true
+		}
+	}
+
+	// set defaults
+	v := reflect.ValueOf(config).Elem()
+	d := reflect.ValueOf(defaults)
+	for i := 0; i < v.NumField(); i++ {
+		if isZero(v.Field(i)) {
+			if isZero(d.Field(i)) {
+				fatal("The `%s` value was not set from command line and no default value exists. "+
+					"Please set a default value in ~/.msgpetrc or specify value in command line.",
+					transforms.Underscore(v.Type().Field(i).Name))
+			} else {
+				v.Field(i).Set(d.Field(i))
+			}
+		}
+	}
+
+}
+
+func isZero(f reflect.Value) bool {
+	return f.Interface() == reflect.Zero(f.Type()).Interface()
+}
+
+func handleError(val interface{}, err error) interface{} {
 	if err != nil {
-		fmt.Println("invalid delay, please input a duration in the format <int><unit>. (ex. 200ms)")
+		fatal("%s", err)
+	}
+	return val
+}
+
+func genMessage(sizeString string) string {
+	random := rand.New(rand.NewSource(time.Now().UnixNano()))
+	nextByte := func() byte {
+		const chars = "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM"
+		return chars[random.Intn(len(chars))]
 	}
 
 	// figure out message size
 	var size int
-	if val, ok := Animals[os.Args[1]]; ok {
+	if val, ok := animals[sizeString]; ok {
 		size = val
-	} else if val, err := strconv.Atoi(os.Args[1]); err == nil && val > 0 {
+	} else if val, err := strconv.Atoi(sizeString); err == nil && val > 0 {
 		size = val
 	} else {
-		fmt.Println("invalid message size")
-		return
+		fatal("invalid message size, " + sizeString)
 	}
 
 	// generate random message
 	byteArray := make([]byte, size)
 	for i := 0; i < size; i++ {
-		byteArray[i] = randomByte()
+		byteArray[i] = nextByte()
 	}
 
 	message := string(byteArray)
 	fmt.Print("message: ", message, "\n\n")
-
-	// run tests
-	start := time.Now()
-	for i := 0; i < config.Clients; i++ {
-		go runTest(message)
-		time.Sleep(delay)
-	}
-
-	// wait for all tests to complete
-	for i := 0; i < config.Clients; i++ {
-		<-testDone
-	}
-	stopTime := time.Since(start)
-
-	// close the results channel
-	close(results)
-
-	// calculate sum of all valid response times
-	var totalResponseTime time.Duration
-	for result := range results {
-		totalResponseTime += result
-	}
-
-	// print summary
-	fmt.Println("Sum of successful response times:", totalResponseTime)
-	fmt.Println("Average successful response time:", totalResponseTime/time.Duration(successfulTests))
-	fmt.Println("Successful tests:", successfulTests)
-	fmt.Println("Failed tests:", failedTests)
-	if failedTests > 0 {
-		fmt.Println("\nErrors (reason -> frequency):")
-	} else {
-		fmt.Printf("\nServer was able to successfully handle %d requests in %s (%f clients/sec)\n",
-			config.Clients,
-			stopTime.String(),
-			float64(config.Clients)/(float64(stopTime)*float64(1e-9)))
-	}
-	for err, count := range errors {
-		fmt.Printf("\t%s -> %d\n", err, count)
-	}
-}
-
-func runTest(message string) {
-	// initialize connection to server
-	conn, err := net.Dial("tcp", config.Host+":"+strconv.Itoa(config.Port))
-	if err != nil {
-		panic(err)
-	}
-
-	// send message to server
-	fmt.Fprintln(conn, message)
-
-	// save start time
-	start := time.Now()
-
-	// wait for response and save response time
-	_, err = bufio.NewReader(conn).ReadString('\n')
-	responseTime := time.Since(start)
-
-	if err != nil {
-		// save error message for summary if request unsuccessful
-		errorArray := strings.SplitAfter(err.Error(), ": ")
-		mux.Lock()
-		errors[errorArray[len(errorArray)-1]]++
-		mux.Unlock()
-		failedTests++
-	} else {
-		// log successful test and response time
-		successfulTests++
-		results <- responseTime
-	}
-
-	// close connection and send done signal
-	conn.Close()
-	testDone <- true
-}
-
-func randomByte() byte {
-	const chars = "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM"
-	return chars[random.Intn(len(chars))]
+	return message
 }
