@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/blrichards/MsgPET/transforms"
+	"github.com/iot-dsa-v2/MsgPET/transforms"
 	"github.com/mitchellh/go-homedir"
 	"gopkg.in/yaml.v2"
 )
